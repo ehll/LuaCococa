@@ -142,7 +142,7 @@
 #else
 	NSString* type_encoding_string = [[rootElement attributeForName:@"type"] stringValue];
 #endif	
-NSLog(@"type_encoding_string: %@", type_encoding_string);
+//NSLog(@"type_encoding_string: %@", type_encoding_string);
 	// Sample strings:
 	// {CGSize="width"d"height"d}
 	// {CGRect="origin"{CGPoint="x"d"y"d}"size"{CGSize="width"d"height"d}}

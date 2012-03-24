@@ -593,9 +593,10 @@ end
 			-- Moving to Lion/non-Fullbridgesupport introduced a bug with selectors because the bridgesupport data format is different
 			new_class["someMethodToInvokeViaSelector"] =
 			{
-				"-v@:@",
+				"-@@:",
 				function (self)
 					print("In someMethodToInvokeViaSelector")
+					return nil
 				end
 			}
 

@@ -84,5 +84,8 @@ bool ParseSupport_IsMagicCookie(NSXMLElement* root_element);
 
 NSString* ParseSupport_ObjcTypeFromKeyName(NSString* key_name);
 
+bool ParseSupport_IsFunctionPointer(NSXMLElement* root_element);
+
+
 @end
 

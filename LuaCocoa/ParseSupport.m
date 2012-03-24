@@ -924,4 +924,25 @@ NSString* ParseSupport_ObjcTypeFromKeyName(NSString* key_name)
 	return encoding_string;
 }
 
+
+bool ParseSupport_IsFunctionPointer(NSXMLElement* root_element)
+{
+	NSString* is_function_pointer = [[root_element attributeForName:@"function_pointer"] stringValue];
+	if(nil == is_function_pointer)
+	{
+		return false;
+	}
+	else
+	{
+		if([is_function_pointer isEqualToString:@"true"])
+		{
+			return true;
+		}
+		else
+		{
+			return false;
+		}
+	}
+}
+
 @end

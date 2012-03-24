@@ -81,11 +81,17 @@
 
 @end
 
-
+// On 10.7.3, I am experiencing crashes on [autorelease_pool] drain after I call collectExhaustively (false or true).
+// If I move the variable to the global space, the crashes go away.
+// It seems almost like the Obj-C garbage collector is deleting the pointer incorrectly.
+// This would be an Apple bug if true.
+// Fortunately, this kind of usage pattern is atypical for most programs.
+NSAutoreleasePool* autorelease_pool = nil;
 
 int main(int argc, char* argv[])
 {
-	NSAutoreleasePool* autorelease_pool = [[NSAutoreleasePool alloc] init];
+//	NSAutoreleasePool* autorelease_pool = [[NSAutoreleasePool alloc] init];
+	autorelease_pool = [[NSAutoreleasePool alloc] init];
 
 	if([NSGarbageCollector defaultCollector])
 	{
@@ -192,10 +198,13 @@ int main(int argc, char* argv[])
 	// collector to collect will maximize your chance of not hitting this condition.
 	// Alternatively, if there is a way you can guarantee all LuaCocoaProxyObjects are collected before you shutdown the lua_State,
 	// then you probably will avoid this situation.
-	[LuaCocoa collectExhaustivelyWaitUntilDone:true];
+	[LuaCocoa collectExhaustivelyWaitUntilDone:false];
 
 	[LuaCocoa purgeParseSupportCache];
-	[autorelease_pool drain];
+	[[NSGarbageCollector defaultCollector] collectExhaustively];
 
+	[autorelease_pool drain];
+	NSLog(@"autorelease_pool: %@", autorelease_pool);
+//	autorelease_pool = nil;
 	return 0;
 }

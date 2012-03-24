@@ -52,6 +52,9 @@
 @property(assign, readwrite) void* dlsymFunctionPointer;
 
 
+// Used by blocks implementation
+- (id) initFunctionPointerWithXMLString:(NSString*)xml_string objcEncodingType:(NSString*)objc_encoding_type;
+
 - (NSArray*) argumentObjcEncodingTypes;
 - (NSString*) returnValueObjcEncodingType;
 
