@@ -38,6 +38,116 @@ static const char* LUASTRUCTBRIDGE_BRIDGESUPPORT_STRUCTNAME = "__luastructbridge
 
 bool LuaStructBridge_GetOrCreateStructMetatable(lua_State* lua_state, NSString* key_name, NSString* struct_name);
 
+/* Alas. The implementation used to be much simpler. The original idea was every struct was allocated in full as newuserdata.
+ So every Lua instance of a struct was a completely self-contained copy which made things very simple to deal with.
+ Unfortunately, it comes to my attention from Fjölnir Ásgeirsson that this fails:
+ nsrect.size.width = 100
+ The problem is that nsrect.size creates a new copy of a NSSize struct and the width is set on that intermediate NSSize struct.
+ Then the value is lost because the original nsrect has no association to the copy of the intermediate struct.
+
+ Interestingly, I originally steered away from this course in my original LuaCore experiments which can be be read about here:
+ http://lua-users.org/lists/lua-l/2008-07/msg00604.html
+ 
+ The context was 2D arrays (which was really for CATransform3D). The feeling was that being able to split off a vector from the
+ matrix and continue to manipulate the vector separately which would continue to affect the matrix would be weird from a scripter perspective.
+ It didn't click until now for me that this 2D array case and this struct case are in fact the same because 
+ a dot access is the same as the table look up so in a nested struct access, I am doing multidimensional tables.
+ 
+ So upon reflection, I'm thinking the reference behavior is the better trade-off of the two. I can justify this in part
+ in how regular Lua tables work. If I pull off a subtable from a table, I am dealing with a reference, not a copy.
+ This suggests though that I may also need to fix assignment constructs to accept references instead of doing a copy.
+ However, I'm not yet sold on this idea mostly because of even more complexity.
+ 
+ This function is intended to start addressing the issue that I now need reference structs. 
+ Before I always assumed the userdata pointer was my struct and I could memcpy into it or whatever since it had the correct size.
+ Now I need two different struct userdata representations. 
+ The first is the original implementation; a full memory blob containing the struct.
+ The second is a reference struct. While it needs to be a unique userdata for Lua instance purposes, 
+ the payload should be a pointer to the struct it is referencing. So I am going to make the userdata the size of a single pointer
+ and it will point to the correct offset for the sub-struct in the original userdata's struct.
+ In addition, I will use the userdata environment table to hold a strong reference to the original userdata (to avoid dangling
+ pointer issues to avoid the possibility that the original struct gets collected while the substruct is still in use).
+ 
+ My existing code seems to simply assume I have the blob of memory I need to walk the struct. So I think I merely need to replace
+ the touserdata functions with this helper function to get me back the correct pointer.
+ */
+
+struct LuaStructBridge_ReferenceStruct
+{
+	// This points to the actual struct (userdata).
+	// This includes the offset inside the real struct that we want, e.g. this will point to the NSSize part inside NSRect.
+	void* pointerToRealStructMemoryOffset;
+};
+
+static void* LuaStructBridge_GetStructPointer(lua_State* lua_state, int index_of_struct, _Bool* is_reference_struct)
+{
+	_Bool found_reference_struct = false;
+	void* struct_pointer_to_return = NULL;
+	// grab it now before I change the stack positions
+	void* struct_userdata = lua_touserdata(lua_state, index_of_struct);
+	
+	// It looks like we always have an environment table whether I explicitly created one or not.
+	// So look inside and if there is a value we stored, then it is a reference struct.
+	// Otherwise, it is a full-blown, normal struct.
+	lua_getfenv(lua_state, index_of_struct); // pushes a table
+	if(lua_objlen(lua_state, -1) == 0) // see if there is anything in the table (assuming I put an array)
+	{
+		found_reference_struct = false;
+		struct_pointer_to_return = struct_userdata;
+	}
+	else
+	{
+		found_reference_struct = true;
+		struct_pointer_to_return = ((struct LuaStructBridge_ReferenceStruct*)struct_userdata)->pointerToRealStructMemoryOffset;
+	}
+	
+	// pop the environment table
+	lua_pop(lua_state, 1);
+
+	if(NULL != is_reference_struct)
+	{
+		*is_reference_struct = found_reference_struct;
+	}
+	
+	return struct_pointer_to_return;
+}
+
+static void* LuaStructBridge_CreateReferenceStruct(lua_State* lua_state, int index_of_original_struct, void* pointer_to_real_data_with_offset, NSString* name_of_return_struct_keyname, NSString* name_of_return_struct_structname)
+{
+//	int top = lua_gettop(lua_state);
+	// convert to absolute index if necesary
+	if(index_of_original_struct < 0)
+	{
+		index_of_original_struct = lua_gettop(lua_state) + index_of_original_struct + 1;
+	}
+	
+	void* return_struct_userdata = lua_newuserdata(lua_state, sizeof(struct LuaStructBridge_ReferenceStruct)); // stack (top is left): [new_struct_reference_userdata ... original_struct_userdata]
+	
+	// Shove the pointer to the real struct data inside the userdata
+	((struct LuaStructBridge_ReferenceStruct*)return_struct_userdata)->pointerToRealStructMemoryOffset = pointer_to_real_data_with_offset;
+	
+	// We must hold a strong reference to the original struct userdata to prevent the data from being collected from underneath us.
+	// Use an environment table to hold the reference.
+	lua_newtable(lua_state); // stack (top is left): [env_table new_struct_reference_userdata ... original_struct_userdata]
+
+	// Copy the original struct into the environment table
+	lua_pushvalue(lua_state, index_of_original_struct); // stack (top is left): [original_struct_userdata env_table new_struct_reference_userdata ... original_struct_userdata]	
+	lua_rawseti(lua_state, -2, 1);    /* env_table[ 1 ] = original_struct_userdata, pops original_struct_userdata */
+	
+	// stack: [MyMatrix2 index MyVector table]
+	lua_setfenv( lua_state, -2 );    // Makes the table on top of the stack the environment table for MyVector (at -2)
+	
+		
+	// Fetch the metatable for this struct type and apply it to the struct so the Lua scripter can access the fields
+	LuaStructBridge_SetStructMetatableOnUserdata(lua_state, -1, name_of_return_struct_keyname, name_of_return_struct_structname);
+
+	/*
+	int top2 = lua_gettop(lua_state);
+	assert(top+1 == top2);
+	*/
+	
+	return return_struct_userdata;
+}
 
 
 /*
@@ -133,7 +243,7 @@ static int LuaStructBridge_ConvertStructToString(lua_State* lua_state)
 	}
 	NSString* key_name = LuaStructBridge_GetBridgeKeyNameFromMetatable(lua_state, -1);
 
-	void* struct_userdata = lua_touserdata(lua_state, -1);
+	void* struct_userdata = LuaStructBridge_GetStructPointer(lua_state, -1, NULL);
 	
 	NSString* description_string = NSStringFromStruct(key_name, struct_userdata);
 	lua_pushstring(lua_state, [description_string UTF8String]);
@@ -144,6 +254,7 @@ static int LuaStructBridge_ConvertStructToString(lua_State* lua_state)
 // For __eq.
 // Tricky again for the fact that I do not know the name of the struct fields until runtime.
 // Following Improved Crazy Thought: Use Lua again to compare each field by iterating through array.
+// Also, should I ignore type? This would allow different struct types to return true if all the fields match (e.g. NSRect/CGRect).
 #if 0
 static int CompareEqualOnCATransform3D(lua_State* lua_state)
 {
@@ -176,7 +287,9 @@ static int LuaStructBridge_GetIndexOnStruct(lua_State* lua_state)
 		luaL_typerror(lua_state, -2, LUASTRUCTBRIDGE_BRIDGESUPPORT_STRUCTNAME);
 	}
 	NSString* key_name = LuaStructBridge_GetBridgeKeyNameFromMetatable(lua_state, -2);
-	void* struct_userdata = lua_touserdata(lua_state, -2);
+	void* struct_userdata = LuaStructBridge_GetStructPointer(lua_state, -2, NULL);
+	// convert to absolute index if necesary
+	int absolute_index_of_original_struct = lua_gettop(lua_state) + -2 + 1;
 	
 	// Parse support
 	ParseSupportStruct* parse_support_struct_object = [[[ParseSupportStruct alloc] initWithKeyName:key_name] autorelease];
@@ -387,13 +500,18 @@ static int LuaStructBridge_GetIndexOnStruct(lua_State* lua_state)
 		NSString* name_of_return_struct_structname = field_element.compositeName;
 		NSString* name_of_return_struct_keyname = field_element.lookupName;
 //		NSLog(@"returning struct compositeName:%@", name_of_return_struct);
-		size_t size_of_return_struct = [ParseSupport sizeOfStructureFromStructureName:name_of_return_struct_keyname];
 		
+		
+		// Change to use reference struct instead of full copy to handle cases like: nsrect.size.width = 10
+		void* return_struct_userdata = LuaStructBridge_CreateReferenceStruct(lua_state, absolute_index_of_original_struct,struct_field_ptr, name_of_return_struct_keyname, name_of_return_struct_structname);
+		/*
+		 size_t size_of_return_struct = [ParseSupport sizeOfStructureFromStructureName:name_of_return_struct_keyname];
 		void* return_struct_userdata = lua_newuserdata(lua_state, size_of_return_struct);
 		memcpy(return_struct_userdata, struct_field_ptr, size_of_return_struct);
 
 		// Fetch the metatable for this struct type and apply it to the struct so the Lua scripter can access the fields
 		LuaStructBridge_SetStructMetatableOnUserdata(lua_state, -1, name_of_return_struct_keyname, name_of_return_struct_structname);
+		 */
 	}
 
 	if(did_push)
@@ -681,7 +799,7 @@ static int LuaStructBridge_SetValueInStruct(lua_State* lua_state, void* the_stru
 				
 			}
 			// Fall through. Checks okay.
-			void* new_userdata = lua_touserdata(lua_state, stack_position_for_value);
+			void* new_userdata = LuaStructBridge_GetStructPointer(lua_state, stack_position_for_value, NULL);
 			memcpy(struct_field_ptr, new_userdata, size_of_return_struct);
 			
 		}
@@ -944,7 +1062,7 @@ static void LuaStructBridge_ParseAndCopyStructValues(lua_State* lua_state, void*
 			// This would allow NSPoint<->CGPoint, but this would also open the door to NSPoint<->NSSize
 			luaL_typerror(lua_state, start_absolute_stack_position, LUASTRUCTBRIDGE_BRIDGESUPPORT_STRUCTNAME);
 		}
-		void* source_struct = lua_touserdata(lua_state, start_absolute_stack_position);
+		void* source_struct = LuaStructBridge_GetStructPointer(lua_state, start_absolute_stack_position, NULL);
 		memcpy(the_struct, source_struct, sizeof(size_of_struct));
 		return;
 	}
@@ -1140,7 +1258,7 @@ static int LuaStructBridge_SetValuesFromFunctionCall(lua_State* lua_state)
 		luaL_typerror(lua_state, 1, LUASTRUCTBRIDGE_BRIDGESUPPORT_STRUCTNAME);
 	}
 	NSString* key_name = LuaStructBridge_GetBridgeKeyNameFromMetatable(lua_state, 1);
-	void* the_struct = lua_touserdata(lua_state, 1);
+	void* the_struct = LuaStructBridge_GetStructPointer(lua_state, 1, NULL);
 	
 //	int new_end_absolute_stack_position = lua_gettop(lua_state);
 	int number_of_args = lua_gettop(lua_state) - 1; // subtract one to exclude the userdata
@@ -1193,7 +1311,7 @@ static int LuaStructBridge_SetIndexOnStruct(lua_State* lua_state)
 		luaL_typerror(lua_state, -3, LUASTRUCTBRIDGE_BRIDGESUPPORT_STRUCTNAME);
 	}
 	NSString* key_name = LuaStructBridge_GetBridgeKeyNameFromMetatable(lua_state, -3);
-	void* struct_userdata = lua_touserdata(lua_state, -3);
+	void* struct_userdata = LuaStructBridge_GetStructPointer(lua_state, -3, NULL);
 	
 	// Parse support
 	ParseSupportStruct* parse_support_struct_object = [[[ParseSupportStruct alloc] initWithKeyName:key_name] autorelease];
