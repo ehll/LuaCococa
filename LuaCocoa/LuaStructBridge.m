@@ -785,7 +785,7 @@ static int LuaStructBridge_SetValueInStruct(lua_State* lua_state, void* the_stru
 			
 			NSString* new_userdata_struct_name = LuaStructBridge_GetBridgeStructNameFromMetatable(lua_state, stack_position_for_value);
 			NSString* new_userdata_struct_keyname = LuaStructBridge_GetBridgeKeyNameFromMetatable(lua_state, stack_position_for_value);
-			NSLog(@"new_userdata_struct_name=%@, new_userdata_struct_keyname=%@", new_userdata_struct_name, new_userdata_struct_keyname);
+//			NSLog(@"new_userdata_struct_name=%@, new_userdata_struct_keyname=%@", new_userdata_struct_name, new_userdata_struct_keyname);
 			if(NULL == new_userdata_struct_name)
 			{
 				// This is not a LuaStructBridge object so abort with error

@@ -558,7 +558,7 @@ static void LuaBlockBridge_GenericClosureCallback(ffi_cif* the_cif, void* return
 // TODO: Consider supporting userdata or tables that implement the __call metamethod
 id LuaBlockBridge_CreateBlockFromLuaFunctionWithParseSupport(lua_State* lua_state, int index_of_lua_function, ParseSupportFunction* parse_support)
 {
-	NSLog(@"top: %d", lua_gettop(lua_state));
+//	NSLog(@"top: %d", lua_gettop(lua_state));
 
 	// The block will keep a strong reference to the Lua function to prevent it from being garbage collected.
 	// In case the function is reused, we should fetch the same block pointer. This means there should be a reverse mapping (function to block mapping); I think a weak reference is sufficent.

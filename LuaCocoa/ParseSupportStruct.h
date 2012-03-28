@@ -14,6 +14,9 @@
 	NSString* structName; // could be different than keyname as in the case of NSPoint->CGPoint
 	NSMutableArray* fieldNameArray;
 	NSMutableArray* fieldElementArray;
+
+	// Note: I have two caches for size. One as a global function and one here. I should see about unifying.
+	// I am worried that the function may be called before a valid ParseSupportStruct is available though.
 	size_t sizeOfStruct;
 }
 

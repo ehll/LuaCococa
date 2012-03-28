@@ -216,7 +216,7 @@ function OnAction10(the_sender)
 			print("in struct_return_block callback", id_obj)
 			return id_obj
 		end,
-		[[<arg> <arg type64='{CGPoint=dd}'/> <retval type64='{CGPoint=dd}'/> </arg>]]
+		[[<arg> <arg type64='{CGPoint=dd}' type='{CGPoint=ff}'/> <retval type64='{CGPoint=dd}' type='{CGPoint=ff}'/> </arg>]]
 	)
 	print("calling")
 	local ret_struct = struct_return_block(the_sender)
